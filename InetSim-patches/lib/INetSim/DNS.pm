@@ -19,6 +19,15 @@ use warnings;
 use Net::DNS;
 use Net::DNS::Nameserver;
 
+# white list dns domain
+use Sys::Hostname;
+use Socket;
+use Net::DNS::Resolver; 
+
+my %static_host_to_ip = ();
+my %static_ip_to_host = ();
+my @domain_white_list = ();
+
 sub dns{
     # check for broken version 0.65 of Net::DNS
     if ($Net::DNS::VERSION eq "0.65") {
@@ -66,9 +75,18 @@ sub dns{
 
     $0 = 'inetsim_' . &INetSim::Config::getConfigParameter("DNS_ServiceName");
     &INetSim::Log::MainLog("started (PID $CPID)", &INetSim::Config::getConfigParameter("DNS_ServiceName"));
+    # configure para for getIP and getHost
+    &my_configure();
     $server->main_loop;
     &INetSim::Log::MainLog("stopped (PID $CPID)", &INetSim::Config::getConfigParameter("DNS_ServiceName"));
     exit 0;
+}
+
+
+sub my_configure{
+	%static_host_to_ip = &INetSim::Config::getConfigHash("DNS_StaticHostToIP");
+	%static_ip_to_host = &INetSim::Config::getConfigHash("DNS_StaticIPToHost");
+	@domain_white_list = &INetSim::Config::getConfigArray("DNS_White_List");
 }
 
 
@@ -112,10 +130,10 @@ sub dns_reply_handler {
 	}
 	else {
 	    if ($queryname =~ /^[0-9a-zA-Z-.]{1,255}$/) {
-		$rdata = &getIP($queryname);
-		push @ans, Net::DNS::RR->new("$queryname $ttl $queryclass A $rdata");
-		push (@logans, "$queryname $ttl $queryclass A $rdata");
-		$resultcode = "NOERROR";
+			$rdata = &getIP($queryname);
+			push @ans, Net::DNS::RR->new("$queryname $ttl $queryclass A $rdata");
+			push (@logans, "$queryname $ttl $queryclass A $rdata");
+			$resultcode = "NOERROR";
 	    }
 	    else {
 		# invalid queryname
@@ -135,12 +153,14 @@ sub dns_reply_handler {
 	    push @logans, "$queryname $ttl $queryclass NS ns1.$queryname";
 	    push @logans, "$queryname $ttl $queryclass NS ns2.$queryname";
 	    # IPs for NS NS in Additional section
-	    my $ns1ip = getIP("ns1.$queryname");
-	    my $ns2ip = getIP("ns2.$queryname");
-	    push @add, Net::DNS::RR->new("ns1.$queryname $ttl $queryclass A $ns1ip");
-	    push @add, Net::DNS::RR->new("ns2.$queryname $ttl $queryclass A $ns2ip");
-	    push @logans, "ns1.$queryname $ttl $queryclass A $ns1ip";
-	    push @logans, "ns2.$queryname $ttl $queryclass A $ns2ip";
+		# remove this part temporarily as they produce the same address now
+		# this is not a gook simulation
+	    #my $ns1ip = getIP("ns1.$queryname");
+	    #my $ns2ip = getIP("ns2.$queryname");
+	    #push @add, Net::DNS::RR->new("ns1.$queryname $ttl $queryclass A $ns1ip");
+	    #push @add, Net::DNS::RR->new("ns2.$queryname $ttl $queryclass A $ns2ip");
+	    #push @logans, "ns1.$queryname $ttl $queryclass A $ns1ip";
+	    #push @logans, "ns2.$queryname $ttl $queryclass A $ns2ip";
 	    $resultcode = "NOERROR";
 	}
 	else {
@@ -151,7 +171,7 @@ sub dns_reply_handler {
 
     elsif ($querytype eq "PTR") {
 	if ($queryname =~ /^[0-9a-zA-Z-.]{1,255}$/) {
-	    my $rdata = &getHost($queryname);
+	    my $rdata = &getHost($queryname);scalar
 	    push @ans, Net::DNS::RR->new("$queryname $ttl $queryclass PTR $rdata");
 	    push @logans, "$queryname $ttl $queryclass $querytype $rdata";
 	    $resultcode = "NOERROR";
@@ -187,13 +207,13 @@ sub dns_reply_handler {
 	    push @ans, Net::DNS::RR->new("$queryname $ttl $queryclass MX 20 mx2.$queryname");
 	    push (@logans, "$queryname $ttl $queryclass MX 10 mx1.$queryname");
 	    push (@logans, "$queryname $ttl $queryclass MX 20 mx2.$queryname");
-	    # IP-Adressen für MX in Additional Section
-	    my $mx1ip = getIP("mx1.$queryname");
-	    my $mx2ip = getIP("mx2.$queryname");
-	    push @add, Net::DNS::RR->new("mx1.$queryname $ttl $queryclass A $mx1ip");
-	    push @add, Net::DNS::RR->new("mx2.$queryname $ttl $queryclass A $mx2ip");
-	    push (@logans, "mx1.$queryname $ttl $queryclass A $mx1ip");
-	    push (@logans, "mx2.$queryname $ttl $queryclass A $mx2ip");
+	    # IP-Adressen for MX in Additional Section
+	    #my $mx1ip = getIP("mx1.$queryname");
+	    #my $mx2ip = getIP("mx2.$queryname");
+	    #push @add, Net::DNS::RR->new("mx1.$queryname $ttl $queryclass A $mx1ip");
+	    #push @add, Net::DNS::RR->new("mx2.$queryname $ttl $queryclass A $mx2ip");
+	    #push (@logans, "mx1.$queryname $ttl $queryclass A $mx1ip");
+	    #push (@logans, "mx2.$queryname $ttl $queryclass A $mx2ip");
 	    $resultcode = "NOERROR";
         }
 	else {
@@ -209,12 +229,12 @@ sub dns_reply_handler {
 	    push (@logans, "$queryname $ttl $queryclass NS ns1.$queryname");
 	    push (@logans, "$queryname $ttl $queryclass NS ns2.$queryname");
 	    # IPs for NS in Additional Section
-	    my $ns1ip = getIP("ns1.$queryname");
-	    my $ns2ip = getIP("ns2.$queryname");
-	    push @add, Net::DNS::RR->new("ns1.$queryname $ttl $queryclass A $ns1ip");
-	    push @add, Net::DNS::RR->new("ns2.$queryname $ttl $queryclass A $ns2ip");
-	    push @logans, "ns1.$queryname $ttl $queryclass A $ns1ip";
-	    push @logans, "ns2.$queryname $ttl $queryclass A $ns2ip";
+	    #my $ns1ip = getIP("ns1.$queryname");
+	    #my $ns2ip = getIP("ns2.$queryname");
+	    #push @add, Net::DNS::RR->new("ns1.$queryname $ttl $queryclass A $ns1ip");
+	    #push @add, Net::DNS::RR->new("ns2.$queryname $ttl $queryclass A $ns2ip");
+	    #push @logans, "ns1.$queryname $ttl $queryclass A $ns1ip";
+	    #push @logans, "ns2.$queryname $ttl $queryclass A $ns2ip";
 	    $resultcode = "NOERROR";
         }
 	else {
@@ -243,18 +263,18 @@ sub dns_reply_handler {
 	    push @ans, Net::DNS::RR->new("$queryname $ttl $queryclass A $rdata");
 	    push (@logans, "$queryname $ttl $queryclass A $rdata");
 	    # IPs for NS and MX
-	    my $ns1ip = getIP("ns1.$queryname");
-	    my $ns2ip = getIP("ns2.$queryname");
-	    push @add, Net::DNS::RR->new("ns1.$queryname $ttl $queryclass A $ns1ip");
-	    push @add, Net::DNS::RR->new("ns2.$queryname $ttl $queryclass A $ns2ip");
-	    push @logans, "ns1.$queryname $ttl $queryclass A $ns1ip";
-	    push @logans, "ns2.$queryname $ttl $queryclass A $ns2ip";
-	    my $mx1ip = getIP("mx1.$queryname");
-	    my $mx2ip = getIP("mx2.$queryname");
-	    push @add, Net::DNS::RR->new("mx1.$queryname $ttl $queryclass A $mx1ip");
-	    push @add, Net::DNS::RR->new("mx2.$queryname $ttl $queryclass A $mx2ip");
-	    push (@logans, "mx1.$queryname $ttl $queryclass A $mx1ip");
-	    push (@logans, "mx2.$queryname $ttl $queryclass A $mx2ip");
+	    #my $ns1ip = getIP("ns1.$queryname");
+	    #my $ns2ip = getIP("ns2.$queryname");
+	    #push @add, Net::DNS::RR->new("ns1.$queryname $ttl $queryclass A $ns1ip");
+	    #push @add, Net::DNS::RR->new("ns2.$queryname $ttl $queryclass A $ns2ip");
+	    #push @logans, "ns1.$queryname $ttl $queryclass A $ns1ip";
+	    #push @logans, "ns2.$queryname $ttl $queryclass A $ns2ip";
+	    #my $mx1ip = getIP("mx1.$queryname");
+	    #my $mx2ip = getIP("mx2.$queryname");
+	    #push @add, Net::DNS::RR->new("mx1.$queryname $ttl $queryclass A $mx1ip");
+	    #push @add, Net::DNS::RR->new("mx2.$queryname $ttl $queryclass A $mx2ip");
+	    #push (@logans, "mx1.$queryname $ttl $queryclass A $mx1ip");
+	    #push (@logans, "mx2.$queryname $ttl $queryclass A $mx2ip");
 	    $resultcode = "NOERROR";
         }
 	else {
@@ -304,31 +324,68 @@ sub dns_reply_handler {
     return ($resultcode, \@ans, \@auth, \@add, {aa => 1});
 }
 
-
+# until now, this dns module use fixed fake soa,mx,ns response
+# and we only filter A type query in white list. may add filter
+# for all query types in future version especially for commonly-used 
+# types: soa,mx,any,ns
 sub getIP {
     my $hostname = lc(shift);
 
-    my %static_host_to_ip = &INetSim::Config::getConfigHash("DNS_StaticHostToIP");
-
     if (defined $static_host_to_ip{$hostname}) {
-	return $static_host_to_ip{$hostname};
+		return $static_host_to_ip{$hostname};
     }
     else {
-	return &INetSim::Config::getConfigParameter("DNS_Default_IP");
+    	# return ture ip if hostname matches pattern in white list
+    	# this may arise conflic if we use the truely ip returned by a dns query
+    	# to do a ptr dns query which will return the fake hostname/domain-name
+    	if (scalar @domain_white_list){
+    		foreach my $pattern (@domain_white_list){
+    			if ($hostname =~ /$pattern/){
+    				# hostname in white list, then query a public wild dns for truely ip
+    				my $resolver = Net::DNS::Resolver->new(nameservers => ["8.8.8.8"]);
+    				my $reply = $resolver->query($hostname);
+    				my $res_ip = "";
+    				if ($reply){
+    					foreach my $rr ($reply->answer){
+    						if ($rr->type eq "A"){
+    							$res_ip = $rr->address;
+    							last;
+    						}
+    					}
+    				}
+    				# resolve succeed
+    				if ($res_ip){
+    					# we can update the %static_ip_to_host to handle the conflic, but it may 
+				    	# increase very large if it remember a lot of query hostname in a long 
+				    	# runtime due to user inadvertently configuration
+    					$static_ip_to_host{join('.', reverse split(/\./, $res_ip)) . ".in-addr.arpa"} = $hostname;
+    					return $res_ip;
+    				}else{
+    					# no response return configured fake ip, this may be replace with
+				    	# a random configured ip working with ip redirection module to capture
+				    	# ip-flow
+						return &INetSim::Config::getConfigParameter("DNS_Default_IP");
+    				}
+    			}
+    		}
+    	}
+    	# no domain_white_list return configured fake ip, this may be replace with
+    	# a random configured ip working with ip redirection module to capture
+    	# ip-flow
+		return &INetSim::Config::getConfigParameter("DNS_Default_IP");
     }
 }
 
 
 sub getHost {
     my $ip = lc(shift);
-
-    my %static_ip_to_host = &INetSim::Config::getConfigHash("DNS_StaticIPToHost");
-
+	
+	# we have remember all ip-hostname pair in white list into %static_ip_to_host table.
     if (defined $static_ip_to_host{$ip}) {
-	return $static_ip_to_host{$ip};
+		return $static_ip_to_host{$ip};
     }
     else {
-	return &INetSim::Config::getConfigParameter("DNS_Default_Hostname") . "." . &INetSim::Config::getConfigParameter("DNS_Default_Domainname");
+		return &INetSim::Config::getConfigParameter("DNS_Default_Hostname") . "." . &INetSim::Config::getConfigParameter("DNS_Default_Domainname");
     }
 }
 

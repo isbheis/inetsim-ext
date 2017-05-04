@@ -128,6 +128,7 @@ tie %ConfigOptions, 'IPC::Shareable', "CNFG", { %shareopts } or die "unable to t
 		  DNS_StaticHostToIP => {},
 		  DNS_StaticIPToHost => {},
 		  DNS_ServiceName => undef,
+		  DNS_White_List => [],		# added for dns white hostname list in which query will return truely ip address <2017-05-03>
 
 		  Echo_TCP_BindAddress => undef,
 		  Echo_TCP_BindPort => 7,
@@ -512,6 +513,7 @@ sub parse_config {
     my @args = ();
     my %dns_statichosttoip = ();
     my %dns_staticiptohost = ();
+    my @dns_white_list = ();	# added for dns white hostname list <2017-05-03>
     my %http_fakefile_exttoname = ();
     my %http_fakefile_exttomimetype = ();
     my %http_static_fakefile_pathtoname = ();
@@ -810,6 +812,20 @@ sub parse_config {
 		    my $reverse_ip = $ip[3] . "." . $ip[2] . "." . $ip[1] . "." . $ip[0] . ".in-addr.arpa";
 		    $dns_staticiptohost{$reverse_ip} = lc($args[1]);
 		}
+	    }
+	    
+	    # DNS_White_List
+	    elsif($args[0] =~ /^dns_white_list/i){
+	    	if(!$args[1] || $args[2]){
+	    		&config_error("missing argument for dns_white_list");
+	    	}
+	    	# args[1] should be a valid perl regex only contain printable characters
+	    	eval{ qr/args[1]/ };
+	    	if((length $args[1]) > 255 || ($args[1] !~ /^[[:graph:]]+$/) || $@){
+	    		&config_error("args[1] is not a valid perl regex");
+	    	}else{
+	    		push (@dns_white_list, $args[1]);
+	    	}
 	    }
 
 	    #################################################
@@ -2407,6 +2423,11 @@ sub parse_config {
     # store static dns configuration
     &setConfigHash("DNS_StaticHostToIP", %dns_statichosttoip);
     &setConfigHash("DNS_StaticIPToHost", %dns_staticiptohost);
+   	
+   	# added for dns hostname white list <2017-05-03>
+   	# store dns_white_list configuration
+   	&setConfigArray("DNS_White_List", @dns_white_list);
+   	
     # store http fakefile configuration
     &setConfigHash("HTTP_FakeFileExtToName", %http_fakefile_exttoname);
     &setConfigHash("HTTP_FakeFileExtToMIMEType", %http_fakefile_exttomimetype);
