@@ -17,7 +17,8 @@ package INetSim::Redirect;
 use strict;
 use warnings;
 
-use IPTables::IPv4::IPQueue qw(:constants);
+use nfqueue;
+use Socket qw(AF_INET);
 
 
 my $serviceName = "redirect";
@@ -53,8 +54,9 @@ my $CODE;
 my $IN_DEV;
 my $OUT_DEV;
 
-my $PID = $$;
-my $ipq;
+#my $PID = $$;		# this will be assigned to InetSim main process ID not the redirect service ID as it got run when use this module
+my $PID = undef;
+my $nfq;
 
 my %type = (	0				=> "echo-reply",
 		3				=> "destination-unreachable",
@@ -157,19 +159,24 @@ sub parse_static_rules {
         $proto = lc($proto);
         # tcp/udp
         if ($proto =~ /(tc|ud)p/) {
+        	# $dst is info before redirect
             ($dst_ip, $dst_port) = split (/:/, $dst, 2);
+            # $realdst is info after redirect 
             $realdst = $rules{$_};
             ($real_ip, $real_port) = split (/:/, $realdst, 2);
+            # 'before' need at least one part, ip or port
             if ((! defined ($dst_ip) || ! $dst_ip) && (! defined ($dst_port) || ! $dst_port)) {
                 next;
             }
+            # 'after' need at least one part, ip or port
             if ((! defined ($real_ip) || ! $real_ip) && (! defined ($real_port) || ! $real_port)) {
                 next;
             }
             $key = "$proto:$dst_ip:$dst_port";
             $value = "$real_ip:$real_port";
             if ((! defined ($real_ip) || ! $real_ip) && defined ($real_port) && $real_port) {
-                # redirect to local port
+            	# 'after' specify a port but no ip
+                # redirect to local port for any 'before' ip
                 #   10.1.1.6:88     =>      :80
                 #          *:6667   =>      :7
                 if (! defined ($REDIRECT{$key})) {
@@ -186,10 +193,12 @@ sub parse_static_rules {
                 }
             }
             elsif (defined ($real_ip) && $real_ip && ((defined ($dst_port) && $dst_port) || (defined ($dst_ip) && $dst_ip))) {
+                # 'after' specify a ip and 'before' spcify a ip or port
                 # redirect to external host
                 # 193.99.144.80:80  =>      72.14.221.104:80
                 #             *:99  =>      81.169.154.213:25
                 #      10.1.1.1:*   =>      192.168.1.1:*
+                # 202.38.64.246:80  =>		202.38.64.246:25
                 if (! defined ($FULLNAT{$key})) {
                     $FULLNAT{$key} = $value;
                     next;
@@ -283,7 +292,9 @@ sub ip_forward {
             return $value;
         }
     }
-    return 0;
+    # should not return 0 but $value as default
+    #return 0;
+    return $value;
 }
 
 
@@ -323,7 +334,11 @@ sub nf_conntrack {
 }
 
 
-
+# rember to set the forward chain policy to be 'accept' for client ip in filter table
+# as the current policy in it may be 'drop'. as we may not know the client ip now, the
+# only way is set the default policy to 'accept' if we don't want to add 'accept forward'
+# for client ip every time we meet a new client ip, so remember to reset the default 
+# policy when this service stop.
 sub create_chains {
     # save original value for ip_forward
     $ip_forward = &ip_forward("status");
@@ -342,9 +357,9 @@ sub create_chains {
     # create chain for changing the source ip/port of packets
     &ipt("-t nat -N INetSim_SNAT_$PID");
     # add rule to redirect all packets with state NEW to userspace
-    &ipt("-t mangle -A INetSim_$PID -m state --state NEW -j QUEUE");
+    &ipt("-t mangle -A INetSim_$PID -m state --state NEW -j NFQUEUE");
     # add rule to redirect all icmp timestamp replies to userspace
-    &ipt("-t mangle -A INetSim_$PID -p icmp --icmp-type 14 -j QUEUE");
+    &ipt("-t mangle -A INetSim_$PID -p icmp --icmp-type 14 -j NFQUEUE");
     # now redirect all packets to inetsim chains
     # queue
     &ipt("-t mangle -A PREROUTING -j INetSim_$PID");
@@ -402,8 +417,8 @@ sub delete_chains {
     &ipt("-t nat -F INetSim_REDIRECT_$PID");
     &ipt("-t nat -X INetSim_REDIRECT_$PID");
     # delete chains in mangle table
-    &ipt("-t mangle -D INetSim_$PID -p icmp --icmp-type 14 -j QUEUE");
-    &ipt("-t mangle -D INetSim_$PID -m state --state NEW -j QUEUE");
+    &ipt("-t mangle -D INetSim_$PID -p icmp --icmp-type 14 -j NFQUEUE");
+    &ipt("-t mangle -D INetSim_$PID -m state --state NEW -j NFQUEUE");
     &ipt("-t mangle -F INetSim_$PID");
     &ipt("-t mangle -X INetSim_$PID");
     # set original value for nf_conntrack
@@ -743,22 +758,22 @@ sub process_packet_tcpudp {
 
 
 sub close_queue {
-    $ipq->close();
+	$nfq->unbind(AF_INET);
+    $nfq->close();
 }
 
 
 
 sub process_queue {
-    while () {
-        my $msg = $ipq->get_message();
-        if (!defined $msg) {
-            next if IPTables::IPv4::IPQueue->errstr eq 'Timeout';
-        }
-        my $mac = $msg->hw_addr();
-        my $ip_packet = $msg->payload();
-        $IN_DEV = $msg->indev_name();
-        $OUT_DEV = $msg->outdev_name();
-        my $mark = $msg->mark();
+	# $dummy can be removed
+	my ($dummy,$payload) = @_;
+    if ($payload){
+        my $mac = $payload->get_packet_hw();
+        my $ip_packet = $payload->get_data();
+        # get dev index, not use, may remove,
+        $IN_DEV = $payload->get_indev();
+        $OUT_DEV = $payload->get_outdev();
+        my $mark = $payload->get_nfmark();
         my $new_packet;
         my $changed = 0;
 
@@ -808,13 +823,13 @@ sub process_queue {
         }
 
         if (! $changed) {
-            $ipq->set_verdict($msg->packet_id, NF_ACCEPT) or die IPTables::IPv4::IPQueue->errstr;
+            &error_exit("set packet verdict failed") if($payload->set_verdict($nfqueue::NF_ACCEPT) < 0);
         }
         else {
-            $ipq->set_verdict($msg->packet_id, NF_ACCEPT, length ($new_packet), $new_packet) or die IPTables::IPv4::IPQueue->errstr;
+            &error_exit("set packet verdict failed when packet was modified") if ($payload->set_verdict_modified($nfqueue::NF_ACCEPT, $new_packet, length($new_packet)) < 0);
         }
     }
-    $ipq->close();
+    return;
 }
 
 
@@ -835,13 +850,14 @@ sub fake_ts_reply {
 
 
 sub split_mac {
-    $MAC = unpack('H12', shift);
+	# the para is already a string
+    $MAC = shift;
     $MAC =~ s/(..)/$1:/g;
     $MAC =~ s/:$//;
 }
 
 
-
+# this func can be rewrite using NetPacket::IP decode method
 sub split_ip {
     my $raw = shift;
     my ($IPVersion, $HeaderLength, $Flags, $FragOffset, $SrcIP, $DstIP, $Options, $Data);
@@ -857,7 +873,7 @@ sub split_ip {
     # get flags
     $Flags = $Word1 >> 13;
     # get fragmentation offset
-    $FragOffset = ($Word1 & 8191) << 3;
+    $FragOffset = ($Word1 & 8191) << 3; 
     # get source and destination ip (dotted quad)
     $SrcIP = sprintf("%d.%d.%d.%d", (($Source & 0xFF000000) >> 24), (($Source & 0x00FF0000) >> 16), (($Source & 0x0000FF00) >> 8), ($Source & 0x000000FF));
     $DstIP = sprintf("%d.%d.%d.%d", (($Destination & 0xFF000000) >> 24), (($Destination & 0x00FF0000) >> 16), (($Destination & 0x0000FF00) >> 8), ($Destination & 0x000000FF));
@@ -904,6 +920,7 @@ sub split_ip {
 }
 
 
+# this func can be rewrite using NetPacket::IP encode method
 sub build_ip {
     my $Checksum;
     my $IPVersion;
@@ -1220,13 +1237,20 @@ sub build_tcp {
 
 sub run {
     $0 = "inetsim [$serviceName]";
+    # set PID
+    $PID = $$;
     $SIG{'INT'} = $SIG{'HUP'} = $SIG{'PIPE'} = $SIG{'QUIT'} = $SIG{'TERM'} = 'IGNORE';
     $ENV{PATH} = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
     # check for uid=0 and iptables
     &check_requirements;
-    # check - is ipqueue runnable ?
+    # set FORWARD default policy in filter and mangle table be ACCEPT
+    # as the default policy may be changed before
+    &ipt("-t filter -P FORWARD ACCEPT");
+    &ipt("-t mangle -P FORWARD ACCEPT")
+    
+    # check - is nfqueue runnable ?
     eval {
-           $ipq = new IPTables::IPv4::IPQueue(copy_mode => IPQ_COPY_PACKET, copy_range => 1500) or die IPTables::IPv4::IPQueue->errstr;
+           $nfq = new nfqueue::queue() or die "setup nfqueue failed!\n";
     };
     # isn't => exit
     if ($@) {
@@ -1235,11 +1259,27 @@ sub run {
     }
     &parse_static_rules;
     &INetSim::Log::MainLog("started (PID $$)", $serviceName);
-    $SIG{'TERM'} = sub { &delete_chains; &close_queue; &INetSim::Log::MainLog("stopped (PID $$)", $serviceName); exit 0;};
     &create_chains;
-    &process_queue;
+   	# set callback
+	$nfq->set_callback(\&process_queue);
+	# open nfqueue, bind it to AF_INET and create queue with num 0
+	my $res = $nfq->fast_open(0, AF_INET);
+	&error_exit("create queue from nfqueue failed\n") if ($res < 0);
+	# set signal handle
+    $SIG{'TERM'} = $SIG{'INT'} = sub { &delete_chains; &close_queue; &INetSim::Log::MainLog("stopped (PID $$)", $serviceName); exit 0;};
+	# start process
+	$nfq->try_run();
 }
 
+
+sub error_exit{
+	my $message = shift;
+	$message = "Unknown error" if (! defined $message);
+	&INetSim::Log::MainLog("(PID $$) exit with error: $message", $serviceName);
+	&delete_chains;
+	&close_queue;
+	exit(1);
+}
 
 
 1;

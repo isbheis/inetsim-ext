@@ -256,7 +256,7 @@ sub error_exit{
 	if (! defined $message){
 		$message = "Unknown error";
 	}
-	&INetSim::Log::MainLog("$service_name terminated with errror: $message", $service_name);
+	&INetSim::Log::MainLog("$service_name terminated with error: $message", $service_name);
 	exit(1);
 }
 
