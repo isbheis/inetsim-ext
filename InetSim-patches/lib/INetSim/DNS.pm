@@ -89,6 +89,8 @@ sub my_configure{
 	%static_ip_to_host = &INetSim::Config::getConfigHash("DNS_StaticIPToHost");
 	@domain_white_list = &INetSim::Config::getConfigArray("DNS_White_List");
 	$wild_nameserver = &INetSim::Config::getConfigParameter("DNS_Wild_NameServer");
+	# untaited
+	$wild_nameserver = $1 if($wild_nameserver =~ /^(.+)$/);
 }
 
 
