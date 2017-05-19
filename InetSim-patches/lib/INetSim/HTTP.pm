@@ -901,8 +901,15 @@ sub read_fakefile {
 	    		$self->{http_response}{headers}{'Content-Type'} = $self->{fakefile_exttomimetype}{$extension};
 				&INetSim::Log::SubLog("[$rhost:$rport] info: Sending fake file configured for extension '$extension'.", $self->{servicename}, $$);
 			}else {
-	    		# extension not configured, check for default fakefile
-	    		if((defined $self->{default_fakefilename}) && (defined $self->{default_fakefilemimetype})) {
+	    		# extension not configured,
+	    		# check if defined specific file for no extension request
+	    		if (defined $self->{fakefile_exttoname}{"NULL"}){
+	    			$fakefilename = $self->{fakeFileDir} . "/" . $self->{fakefile_exttoname}{"NULL"};
+					$self->{http_response}{headers}{'Content-Type'} = $self->{fakefile_exttomimetype}{"NULL"};
+					&INetSim::Log::SubLog("[$rhost:$rport] info: Sending fake file configured for no extension .", $self->{servicename}, $$);
+	    		}
+	    		# check for default fakefile
+	    		elsif((defined $self->{default_fakefilename}) && (defined $self->{default_fakefilemimetype})) {
 					$fakefilename = $self->{fakeFileDir} . "/" . $self->{default_fakefilename};
 					$self->{http_response}{headers}{'Content-Type'} = $self->{default_fakefilemimetype};
 					&INetSim::Log::SubLog("[$rhost:$rport] info: No matching file extension configured. Sending default fake file.", $self->{servicename}, $$);
