@@ -58,7 +58,20 @@ sub configure_hook {
             &INetSim::Log::MainLog("failed! Unable to read SSL certificate files", $self->{servicename});
             exit 1;
         }
-        #
+
+        # get configured cert and key pairs for dynamic loading
+        my @ssl_cert_file_list = &INetSim::Config::getConfigArray("HTTPS_Cert_File_List");
+        my @ssl_key_file_list = &INetSim::Config::getConfigArray("HTTPS_Key_File_List");
+        my $tmp_ele;
+        foreach $tmp_ele (@ssl_cert_file_list){
+            $tmp_ele = $self->{cert_dir} . $tmp_ele;
+        }
+        foreach $tmp_ele (@ssl_key_file_list){
+            $tmp_ele = $self->{cert_dir} . $tmp_ele;
+        }
+        $self->{cert_file_list} = \@ssl_cert_file_list;
+        $self->{key_file_list} = \@ssl_key_file_list;
+
         $self->{ssl_enabled} = 1;
         $self->{server}->{port} = &INetSim::Config::getConfigParameter("HTTPS_BindPort");  # bind to port
         $self->{http_version} = &INetSim::Config::getConfigParameter("HTTPS_Version");
@@ -1064,14 +1077,36 @@ sub get_gmdate {
 
 
 
+sub get_ssl_params_randomly{
+    my $server = shift;
+
+    my %params;
+    $params{SSL_version} = "SSLv23";
+    $params{SSL_cipher_list} = "ALL";
+    $params{SSL_server} = 1;
+    $params{SSL_use_cert} = 1;
+
+    # randomly choose cert and key from configured cert list and key list
+    my @cert_list = @{$server->{cert_file_list}};
+    my @key_list = @{$server->{key_file_list}};
+    if (scalar @cert_list > 0){
+        my $ccount = scalar @cert_list;
+        my $idx = int(rand($ccount));
+        $params{SSL_cert_file} = $cert_list[$idx];
+        $params{SSL_key_file} = $key_list[$idx];
+    }else{
+        $params{SSL_cert_file} = $server->{ssl_crt};
+        $params{SSL_key_file} = $server->{ssl_key};
+    }
+
+    return %params;
+}
+
 sub upgrade_to_ssl {
     my $self = shift;
-    my %ssl_params = (  SSL_version             => "SSLv23",
-                        SSL_cipher_list         => "ALL",
-                        SSL_server              => 1,
-                        SSL_use_cert            => 1,
-                        SSL_key_file            => $self->{ssl_key},
-                        SSL_cert_file           => $self->{ssl_crt} );
+
+    # get ssl params
+    my %ssl_params = $self->get_ssl_params_randomly();
 
     $self->{last_ssl_error} = "";
 
