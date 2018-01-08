@@ -129,6 +129,7 @@ tie %ConfigOptions, 'IPC::Shareable', "CNFG", { %shareopts } or die "unable to t
 		  DNS_StaticIPToHost => {},
 		  DNS_ServiceName => undef,
 		  DNS_White_List => [],		# added for dns white hostname list in which query will return truely ip address <2017-05-03>
+		  DNS_Wild_NameServer => "8.8.8.8",
 
 		  Echo_TCP_BindAddress => undef,
 		  Echo_TCP_BindPort => 7,
@@ -825,6 +826,19 @@ sub parse_config {
 	    		&config_error("args[1] is not a valid perl regex");
 	    	}else{
 	    		push (@dns_white_list, $args[1]);
+	    	}
+	    }
+	    
+	    # DNS_Wild_NameServer
+	    elsif($args[0] =~ /^dns_wild_nameserver/i){
+	    	if(!$args[1] || $args[2]){
+	    		&config_error("only take one argument for dns_white_list");
+	    	}
+	    	# args[1] should be a valid ip address
+	    	if($args[1] !~ /^$RE_validIP$/){
+	    		&config_error("args[1] is not a valid ip address");
+	    	}else{
+	    		&setConfigParameter("DNS_Wild_NameServer", $args[1])
 	    	}
 	    }
 
