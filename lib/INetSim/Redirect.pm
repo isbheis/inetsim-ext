@@ -290,6 +290,9 @@ sub ip_forward {
         }
         elsif ($cmd eq "status") {
             return $value;
+        # default
+        }else{
+            return $value
         }
     }
     # should not return 0 but $value as default
