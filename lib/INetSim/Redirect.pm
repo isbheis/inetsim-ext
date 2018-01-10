@@ -1249,7 +1249,7 @@ sub run {
     # set FORWARD default policy in filter and mangle table be ACCEPT
     # as the default policy may be changed before
     &ipt("-t filter -P FORWARD ACCEPT");
-    &ipt("-t mangle -P FORWARD ACCEPT")
+    &ipt("-t mangle -P FORWARD ACCEPT");
     
     # check - is nfqueue runnable ?
     eval {
