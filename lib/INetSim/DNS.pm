@@ -30,6 +30,8 @@ my @domain_white_list = ();
 my $wild_nameserver = undef;
 my %real_host_to_ip = ();
 my %real_ip_to_host = ();
+my @ip_pool = ();   # ip list from which response dns query randomly
+my %random_host_to_ip = ();
 
 sub dns{
     # check for broken version 0.65 of Net::DNS
@@ -91,6 +93,7 @@ sub my_configure{
 	%static_ip_to_host = &INetSim::Config::getConfigHash("DNS_StaticIPToHost");
 	@domain_white_list = &INetSim::Config::getConfigArray("DNS_White_List");
 	$wild_nameserver = &INetSim::Config::getConfigParameter("DNS_Wild_NameServer");
+    @ip_pool = &INetSim::Config::getConfigArray("DNS_IP_Pool");
 	# untaited
 	$wild_nameserver = $1 if($wild_nameserver =~ /^(.+)$/);
 }
@@ -341,6 +344,8 @@ sub getIP {
 		return $static_host_to_ip{$hostname};
     }elsif (defined $real_host_to_ip{$hostname}){
         return $real_host_to_ip{$hostname};
+    }elsif (defined $random_host_to_ip{$hostname}){
+        return $random_host_to_ip{$hostname};
     }
     else {
     	# return ture ip if hostname matches pattern in white list
@@ -369,7 +374,7 @@ sub getIP {
                         # and update the %real_ip_to_host to handle the ptr query conflic
 
                         # clear the hash if it's too big
-                        if (scalar keys(%real_ip_to_host) >= 0x1000){
+                        if (scalar keys(%real_host_to_ip) >= 0x1000){
                             # clear cached real ip and host
                             %real_ip_to_host = ();
                             %real_host_to_ip = ();
@@ -378,18 +383,38 @@ sub getIP {
                         $real_ip_to_host{join('.', reverse split(/\./, $res_ip)) . ".in-addr.arpa"} = $hostname;
     					return $res_ip;
     				}else{
-    					# no response return configured fake ip, this may be replace with
-				    	# a random configured ip working with ip redirection module to capture
-				    	# ip-flow
-						return &INetSim::Config::getConfigParameter("DNS_Default_IP");
+                        # no response, return a random ip from configured ip pool
+                        # not support ptr query with ip selected from configured ip pool
+                        if (scalar @ip_pool){
+                            # clear the hash if it's too big
+                            if (scalar keys(%random_host_to_ip) >= 0x1000){
+                                %random_host_to_ip = ();
+                            }
+                            my $ip_idx = int(rand() * scalar @ip_pool);
+                            $random_host_to_ip{$hostname} = $ip_pool[$ip_idx];
+                            return $ip_pool[$ip_idx];
+                        }else{
+                            # return default ip
+                            return &INetSim::Config::getConfigParameter("DNS_Default_IP");
+                        }
     				}
     			}
-    		}
+            }
     	}
-    	# no response return configured fake ip, this may be replace with
-    	# a random configured ip working with ip redirection module to capture
-    	# ip-flow
-		return &INetSim::Config::getConfigParameter("DNS_Default_IP");
+        # no response, return a random ip from configured ip pool
+        # not support ptr query with ip selected from configured ip pool
+        if (scalar @ip_pool){
+            # clear the hash if it's too big
+            if (scalar keys(%random_host_to_ip) >= 0x1000){
+                %random_host_to_ip = ();
+            }
+            my $ip_idx = int(rand() * scalar @ip_pool);
+            $random_host_to_ip{$hostname} = $ip_pool[$ip_idx];
+            return $ip_pool[$ip_idx];
+        }else{
+            return;
+        }
+
     }
 }
 
@@ -402,8 +427,7 @@ sub getHost {
 		return $static_ip_to_host{$ip};
     }elsif (defined $real_ip_to_host{$ip}){
         return $real_ip_to_host{$ip};
-    }
-    else {
+    }else {
 		return &INetSim::Config::getConfigParameter("DNS_Default_Hostname") . "." . &INetSim::Config::getConfigParameter("DNS_Default_Domainname");
     }
 }

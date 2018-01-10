@@ -130,6 +130,7 @@ tie %ConfigOptions, 'IPC::Shareable', "CNFG", { %shareopts } or die "unable to t
 		  DNS_ServiceName => undef,
 		  DNS_White_List => [],		# added for dns white hostname list in which query will return truely ip address <2017-05-03>
 		  DNS_Wild_NameServer => "8.8.8.8",
+          DNS_IP_Pool => [],    # added for dns query responsing with random ip
 
 		  Echo_TCP_BindAddress => undef,
 		  Echo_TCP_BindPort => 7,
@@ -517,6 +518,7 @@ sub parse_config {
     my %dns_statichosttoip = ();
     my %dns_staticiptohost = ();
     my @dns_white_list = ();	# added for dns white hostname list <2017-05-03>
+    my @dns_ip_pool = ();   # added for dns return random ip <2018-01-10>
     my %http_fakefile_exttoname = ();
     my %http_fakefile_exttomimetype = ();
     my %http_static_fakefile_pathtoname = ();
@@ -822,7 +824,7 @@ sub parse_config {
 	    }
 	    
 	    # DNS_White_List
-	    elsif($args[0] =~ /^dns_white_list/i){
+	    elsif($args[0] =~ /^dns_white_list$/i){
 	    	if(!$args[1] || $args[2]){
 	    		&config_error("missing argument for dns_white_list");
 	    	}
@@ -836,7 +838,7 @@ sub parse_config {
 	    }
 	    
 	    # DNS_Wild_NameServer
-	    elsif($args[0] =~ /^dns_wild_nameserver/i){
+	    elsif($args[0] =~ /^dns_wild_nameserver$/i){
 	    	if(!$args[1] || $args[2]){
 	    		&config_error("only take one argument for dns_white_list");
 	    	}
@@ -847,6 +849,20 @@ sub parse_config {
 	    		&setConfigParameter("DNS_Wild_NameServer", $args[1])
 	    	}
 	    }
+
+        # DNS_IP_Pool
+	    elsif($args[0] =~ /^dns_ip_pool$/i){
+            if(!$args[1]){
+                &config_error("missing argument for dns_ip_pool");
+            }
+            # args[1] should be a valid ip address
+            if($args[1] !~ $RE_validIP){
+                &config_error("args[1] is not a valid IP address");
+            }else{
+                push (@dns_ip_pool, $args[1]);
+            }
+        }
+
 
 	    #################################################
 	    # Echo
@@ -2461,6 +2477,8 @@ sub parse_config {
    	# added for dns hostname white list <2017-05-03>
    	# store dns_white_list configuration
    	&setConfigArray("DNS_White_List", @dns_white_list);
+    # store dns_ip_pool
+    &setConfigArray("DNS_IP_Pool", @dns_ip_pool);
    	
     # store http fakefile configuration
     &setConfigHash("HTTP_FakeFileExtToName", %http_fakefile_exttoname);
