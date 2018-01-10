@@ -194,6 +194,8 @@ tie %ConfigOptions, 'IPC::Shareable', "CNFG", { %shareopts } or die "unable to t
 		  HTTPS_Redirect_URL_List => {},			# added for url redirection <2017-04-01>
 		  HTTPS_Dynamic_ParaToName => {},			# added for dynamic request parameters match <2017-04-28>
 		  HTTPS_Dynamic_ParaToMIMETYPE => {},
+          HTTPS_Cert_File_List => [],        # added for dynamic certs loading
+          HTTPS_Key_File_List => [],
 
 		  Ident_BindAddress => undef,
 		  Ident_BindPort => 113,
@@ -530,6 +532,10 @@ sub parse_config {
     my %https_dynamic_paratomimetype = ();
     my %https_redirect_url_list = ();		# added for url redirection <2017-04-01>
     my %redirect_static_rules = ();
+
+    my @https_cert_file_list = ();   # for dynamic certs loading
+    my @https_key_file_list = ();
+
     my %smtp_service_extensions = ();
     my %smtps_service_extensions = ();
     my %pop3_capabilities = ();
@@ -1175,6 +1181,20 @@ sub parse_config {
 		    &setConfigParameter("HTTPS_CrtFileName", $args[1]);
 		}
 	    }
+
+        # https cert and key file list
+        elsif ($args[0] =~ /^https_ssl_cert_key_file_list$/i){
+            if (! $args[2]) {
+                &config_error("missing argument for https_ssl_cert_key_file_list");
+            }elsif ($args[1] !~ $RE_validFilename) {
+                &config_error("'$args[1]' is not a valid filename");
+            }elsif ($args[2] !~ $RE_validFilename){
+                &config_error("'$args[2]' is not a valid filename");
+            }else{
+                push(@https_cert_file_list, $args[1]);
+                push(@https_key_file_list, $args[2]);
+            }
+        }
 
 	    # HTTPS_DHFileName
 	    elsif ($args[0] =~ /^https_ssl_dhfile$/i) {
@@ -2471,6 +2491,11 @@ sub parse_config {
     # added for url redirection <2017-04-01>
     # store https request url redirection configuration
     &setConfigHash("HTTPS_Redirect_URL_List", %https_redirect_url_list);
+
+    # added for randomly dynamic certs loading
+    # store cert and key list
+    &setConfigArray("HTTPS_Cert_File_List", @https_cert_file_list);
+    &setConfigArray("HTTPS_Key_File_List", @https_key_file_list)
     
     # store static rules for redirect
     &setConfigHash("Redirect_StaticRules", %redirect_static_rules);
