@@ -27,6 +27,7 @@ use Net::DNS::Resolver;
 my %static_host_to_ip = ();
 my %static_ip_to_host = ();
 my @domain_white_list = ();
+my $wild_nameserver = undef;
 
 sub dns{
     # check for broken version 0.65 of Net::DNS
@@ -87,6 +88,9 @@ sub my_configure{
 	%static_host_to_ip = &INetSim::Config::getConfigHash("DNS_StaticHostToIP");
 	%static_ip_to_host = &INetSim::Config::getConfigHash("DNS_StaticIPToHost");
 	@domain_white_list = &INetSim::Config::getConfigArray("DNS_White_List");
+	$wild_nameserver = &INetSim::Config::getConfigParameter("DNS_Wild_NameServer");
+	# untaited
+	$wild_nameserver = $1 if($wild_nameserver =~ /^(.+)$/);
 }
 
 
@@ -342,7 +346,9 @@ sub getIP {
     		foreach my $pattern (@domain_white_list){
     			if ($hostname =~ /$pattern/){
     				# hostname in white list, then query a public wild dns for truely ip
-    				my $resolver = Net::DNS::Resolver->new(nameservers => ["8.8.8.8"]);
+    				# setup a time out but the timeout may be more than 2 times set here
+    				# when set nameservers to be a host not supplies dns service.
+    				my $resolver = Net::DNS::Resolver->new(nameservers => [$wild_nameserver],udp_timeout=>1.5);
     				my $reply = $resolver->query($hostname);
     				my $res_ip = "";
     				if ($reply){
@@ -369,7 +375,7 @@ sub getIP {
     			}
     		}
     	}
-    	# no domain_white_list return configured fake ip, this may be replace with
+    	# no response return configured fake ip, this may be replace with
     	# a random configured ip working with ip redirection module to capture
     	# ip-flow
 		return &INetSim::Config::getConfigParameter("DNS_Default_IP");
