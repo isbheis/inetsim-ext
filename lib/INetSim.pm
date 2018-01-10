@@ -46,7 +46,7 @@ use INetSim::Dummy::UDP;
 use INetSim::FTP;
 use INetSim::Syslog;
 use INetSim::IRC;
-use INetSim::PortDetector;	# add for port detection service <2017-04-12>
+#use INetSim::PortDetector;	# add for port detection service <2017-04-12>
 
 my $VERSION = "INetSim 1.2.6 (2016-08-29)";
 
@@ -161,9 +161,9 @@ sub fork_services {
 	    elsif(/^ircs$/) {
 		INetSim::IRC->run( SSL => 1 );
 	    }
-	    elsif(/^port_detector$/){
-	    &INetSim::PortDetector::main_loop;
-	    }
+	    #elsif(/^port_detector$/){
+	    #&INetSim::PortDetector::main_loop;
+	    #}
 	}
 	else {
 	    &error_exit ("Could not fork: $!", 1);
@@ -226,12 +226,12 @@ sub redirect_packets {
             &INetSim::Log::MainLog("failed! Error: Sorry, the Redirect module does not support this operating system!", "redirect");
             return 0;
         }
-        # check for Perlipq library
+        # check for nfqueue library
         eval {
-               eval "use IPTables::IPv4::IPQueue; 1" or die;
+               eval "use nfqueue; 1" or die;
         };
         if ($@) {
-            &INetSim::Log::MainLog("failed! Error: Sorry, this module requires the Perlipq library (IPTables::IPv4::IPQueue)!", "redirect");
+            &INetSim::Log::MainLog("failed! Error: Sorry, this module requires the nfqueue library!", "redirect");
             return 0;
         }
         # check for redirect module
