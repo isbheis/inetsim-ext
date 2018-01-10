@@ -28,6 +28,8 @@ my %static_host_to_ip = ();
 my %static_ip_to_host = ();
 my @domain_white_list = ();
 my $wild_nameserver = undef;
+my %real_host_to_ip = ();
+my %real_ip_to_host = ();
 
 sub dns{
     # check for broken version 0.65 of Net::DNS
@@ -337,6 +339,8 @@ sub getIP {
 
     if (defined $static_host_to_ip{$hostname}) {
 		return $static_host_to_ip{$hostname};
+    }elsif (defined $real_host_to_ip{$hostname}){
+        return $real_host_to_ip{$hostname};
     }
     else {
     	# return ture ip if hostname matches pattern in white list
@@ -361,10 +365,17 @@ sub getIP {
     				}
     				# resolve succeed
     				if ($res_ip){
-    					# we can update the %static_ip_to_host to handle the conflic, but it may 
-				    	# increase very large if it remember a lot of query hostname in a long 
-				    	# runtime due to user inadvertently configuration
-    					$static_ip_to_host{join('.', reverse split(/\./, $res_ip)) . ".in-addr.arpa"} = $hostname;
+                        # remember queries in %real_host_to_ip for consistency of duplicated queries later,
+                        # and update the %real_ip_to_host to handle the ptr query conflic
+
+                        # clear the hash if it's too big
+                        if (scalar keys(%real_ip_to_host) >= 0x1000){
+                            # clear cached real ip and host
+                            %real_ip_to_host = ();
+                            %real_host_to_ip = ();
+                        }
+                        $real_host_to_ip{$hostname} = $res_ip;
+                        $real_ip_to_host{join('.', reverse split(/\./, $res_ip)) . ".in-addr.arpa"} = $hostname;
     					return $res_ip;
     				}else{
     					# no response return configured fake ip, this may be replace with
@@ -389,6 +400,8 @@ sub getHost {
 	# we have remember all ip-hostname pair in white list into %static_ip_to_host table.
     if (defined $static_ip_to_host{$ip}) {
 		return $static_ip_to_host{$ip};
+    }elsif (defined $real_ip_to_host{$ip}){
+        return $real_ip_to_host{$ip};
     }
     else {
 		return &INetSim::Config::getConfigParameter("DNS_Default_Hostname") . "." . &INetSim::Config::getConfigParameter("DNS_Default_Domainname");
