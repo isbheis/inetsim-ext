@@ -44,6 +44,30 @@ sub configure_hook {
     $self->{server}->{log_level} = 0;                                # do not log anything
     # cert directory
     $self->{cert_dir} = &INetSim::Config::getConfigParameter("CertDir");
+    # data directory
+    $self->{data_dir} = &INetSim::Config::getConfigParameter("DataDir") . "http/";
+    # wget path, note that using wget as a proxy may do too many temporary file IO(write, read and delete),
+    # which may hurt disk performance and be hard to handle high concurrency
+    # find wget command
+    my $wget_cmd = "";
+    $ENV{PATH} = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+    my @path = split (/:/, $ENV{PATH});
+    foreach (@path) {
+        # search wget in path
+        if (! $wget_cmd && -x "$_/wget") {
+            $wget_cmd = "$_/wget";
+        }
+    }
+    # check wget
+    if (! $wget_cmd) {
+        &INetSim::Log::MainLog("Warning: unable to find wget command! http proxy will be disabled", &INetSim::Config::getConfigParameter("HTTP_ServiceName");
+    }else{
+        `$wget_cmd --version > /dev/null 2>&1`;
+        if ($?){
+        &INetSim::Log::MainLog("Warning: unable to run wget command! http proxy will be disabled", &INetSim::Config::getConfigParameter("HTTP_ServiceName");
+        }
+    }
+    $self->{wget_cmd} = $wget_cmd;
 
     if (defined $self->{server}->{'SSL'} && $self->{server}->{'SSL'}) {
         $self->{servicename} = &INetSim::Config::getConfigParameter("HTTPS_ServiceName");
@@ -295,6 +319,8 @@ sub process_request {
     $self->{http_request}{pathfile} = "";
     # add for dynamic path paras match support <2017-04-26>
     $self->{http_request}{dynamic_part} = "";
+    # add for proxy requests
+    $self->{http_request}{full_req} = "";
 
     $self->{postdata_pathfile} = "";
 
@@ -318,16 +344,16 @@ sub process_request {
 	    # log requested URL
 	    my $fullreq;
 	    if (($self->{http_request}{request_uri_orig} !~ /^https?:\/\//) && (defined $self->{http_request}{headers}{'Host'})) { 
-		if ($self->{ssl_enabled}) {
-		    $fullreq = "https://" . $self->{http_request}{headers}{'Host'} . $self->{http_request}{request_uri_orig};
-		}
-		else {
-		    $fullreq = "http://" . $self->{http_request}{headers}{'Host'} . $self->{http_request}{request_uri_orig};
-		}
-	    }
-	    else {
-		$fullreq = $self->{http_request}{request_uri_orig};
-	    }
+            if ($self->{ssl_enabled}) {
+                $fullreq = "https://" . $self->{http_request}{headers}{'Host'} . $self->{http_request}{request_uri_orig};
+            }else {
+                $fullreq = "http://" . $self->{http_request}{headers}{'Host'} . $self->{http_request}{request_uri_orig};
+            }
+            # set fullreq, no support for requests not specify a host section
+            $self->{http_request}{full_req} = $fullreq;
+        }else {
+            $fullreq = $self->{http_request}{request_uri_orig};
+        }
 	    
 	    # for adding 302 redirect action
    		# if request method is GET and the request url matches configured url, send redirection response
@@ -338,7 +364,7 @@ sub process_request {
 			$self->redirect_request($fullreq);
 			return;
    		}
-	    
+
 	    # replace non-printable characters with "<NP>" before logging
 	    $fullreq =~ s/[^\x20-\x7e]/\<NP\>/g;
 	    &INetSim::Log::SubLog("[$rhost:$rport] info: Request URL: $fullreq", $self->{servicename}, $$);
@@ -356,11 +382,21 @@ sub process_request {
 		else {
 		    $fullreq = $self->{http_request}{request_uri_decoded};
 		}
+
 		# replace non-printable characters with "<NP>" before logging
 		$fullreq =~ s/[^\x20-\x7e]/\<NP\>/g;
 		&INetSim::Log::SubLog("[$rhost:$rport] info: Decoded URL: $fullreq", $self->{servicename}, $$);
 	    }
-		
+
+        # proxy GET and HEAD request if request has a host section
+        if ($self->{http_request}{full_req} && $self->{wget_cmd} && ($self->{http_request}{method} eq "GET" || $self->{http_request}{method} eq "HEAD")){
+            my $proxy_res = $self->proxy_request;
+            if ($proxy_res){
+                # proxy succeed
+                return;
+            }
+        }
+
 	    # for HEAD/GET/POST requests read fake/real file
 	    if (($self->{http_request}{method} eq "HEAD") || ($self->{http_request}{method} eq "GET") || ($self->{http_request}{method} eq "POST")) {
 		if($self->{http_fakemode}) {
@@ -788,6 +824,84 @@ sub send_http_response {
 	&INetSim::Log::SubLog("[$rhost:$rport] stat: 1 method=$self->{http_request}{method} url=$url sent=$self->{http_response}{filename} postdata=$self->{postdata_pathfile}", $self->{servicename}, $$);
     } else {
 	&INetSim::Log::SubLog("[$rhost:$rport] stat: 0 method=$self->{http_request}{method} url=$url sent=$self->{http_response}{filename} postdata=$self->{postdata_pathfile}", $self->{servicename}, $$);
+    }
+}
+
+
+sub proxy_request{
+    my $self = shift;
+    my $server = $self->{server};
+    my $client = $server->{client};
+    my $rhost = $server->{peeraddr};
+    my $rport = $server->{peerport};
+    my $req_method = $self->{http_request}{method};
+
+    # use wget to get real file
+    my $tmp_file = $self->{data_dir} . "_$$";
+    $tmp_file =~ /(.*)/;    # untained
+    $tmp_file = $1;
+    my $timeout = 5;    # 5 seconds
+    my $req = $server->{http_request}{full_req};
+    $req =~ /(.*)/;
+    $req = $1;
+    `wget --save-header -T $timeout -O $tmp_file $req > /dev/null 2>&1`;
+    if ($?){
+        # proxy req failed
+        &INetSim::Log::SubLog("[$rhost:$rport] stat: 2, proxy '$req, $req_method' failed, error code $?", $self->{servicename}, $$);
+        # clear
+        `unlink $tmp_file`;
+        if ($?){
+            &INetSim::Log::SubLog("[$rhost:$rport] stat: 3, proxy warning: unable to clear $tmp_file, error code $?", $self->{servicename}, $$);
+        }
+        return "";
+    }else{
+        # read result from tmp_file and send to client
+        my $filesize = (-s $tmp_file);
+        if ($filesize <= 1){
+            # null file
+            &INetSim::Log::SubLog("[$rhost:$rport] stat: 2, proxy '$req, $req_method' failed: wget get null file", $self->{servicename}, $$);
+            return "";
+        }
+
+        # read file
+        my $response_header = "";
+        my $response_body = undef;
+        if (!open(FILE, "<$tmp_file")){
+            &INetSim::Log::SubLog("[$rhost:$rport] stat: 2, proxy '$req, $req_method' failed: open $tmp_file failed", $self->{servicename}, $$);
+            return "";
+        }
+        binmode (FILE);
+        while (<FILE>){
+            if (!defined $response_body){
+                # response header
+                $response_header .= $_;
+                if ($_ eq "\r\n"){
+                    # end of response header
+                    $response_body = "";
+                }
+            }else{
+                # response body
+                $response_body .= $_;
+            }
+        }
+        close (FILE);
+
+        # send response
+        print $client $response_header;
+        if ($response_body){
+            print $client $response_body;
+        }
+
+        # log
+        &INetSim::Log::SubLog("[$rhost:$rport] stat: 0, proxy '$req, $req_method' succeed: send data length $filesize", $self->{servicename}, $$);
+
+        # clear tmp_file
+        `unlink $tmp_file`;
+        if ($?){
+            &INetSim::Log::SubLog("[$rhost:$rport] stat: 3, proxy warning: unable to clear '$tmp_file', error $?", $self->{servicename}, $$);
+        }
+
+        return 1;
     }
 }
 
