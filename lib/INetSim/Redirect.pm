@@ -640,12 +640,14 @@ sub process_packet_tcpudp {
                 return 0;
             }
         }
-        # forward rules
-        &ipt("-t mangle -A INetSim_FORWARD_$PID -s $SRC_IP -d $DST_IP -p $PROTO --dport $DST_PORT -j FORWARD");
-        &ipt("-t mangle -A INetSim_FORWARD_$PID -d $SRC_IP -s $DST_IP -p $PROTO --sport $DST_PORT -j FORWARD");
+        # forward rules should always do snat, otherwise the response packets may not arrive client if client
+        # can only access internet indirectly by set the host which runs this redirect module to be its gateway.
+        # 202.38.64.246:80 --> 202.38.64.246:80
+        # $SRC_IP is the client ip and $DST_IP is 202.38.64.246, $SRC_PORT is client port and $DST_PROT is 80
+        &ipt("-t nat -A INetSim_SNAT_$PID -s $SRC_IP -d $DST_IP -p $PROTO --dport $DST_PORT -j SNAT --to-source $externalAddress");
         # mark rules for more packets with the same properties
         &ipt("-t mangle -I INetSim_$PID -s $SRC_IP -d $DST_IP -p $PROTO --dport $DST_PORT -j MARK --set-mark 1");
-        &ipt("-t mangle -I INetSim_$PID -d $SRC_IP -s $DST_IP -p $PROTO --sport $DST_PORT -j MARK --set-mark 1");
+        &ipt("-t mangle -I INetSim_$PID -s $DST_IP -d $externalAddress -p $PROTO --sport $DST_PORT -j MARK --set-mark 1");
         # change ttl
         if ($changeTTL) {
             $ttl_set = int(rand(30) + 34);
